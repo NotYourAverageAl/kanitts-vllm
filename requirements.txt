@@ -1,0 +1,5 @@
+nemo_toolkit[tts]
+transformers==4.57.1
+fastapi
+uvicorn
+
