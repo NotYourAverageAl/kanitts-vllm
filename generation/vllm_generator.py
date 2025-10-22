@@ -3,12 +3,14 @@
 import asyncio
 import time
 import torch
+import numpy as np
 from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
+from vllm.inputs import TokensPrompt
 from transformers import AutoTokenizer
 
 from config import (
     MODEL_NAME, START_OF_HUMAN, END_OF_TEXT, END_OF_HUMAN, END_OF_AI,
-    TEMPERATURE, TOP_P, REPETITION_PENALTY, MAX_TOKENS
+    TEMPERATURE, TOP_P, REPETITION_PENALTY, MAX_TOKENS, SAMPLE_RATE
 )
 
 
@@ -218,3 +220,130 @@ class VLLMTTSGenerator:
                 raise exception
 
             return result
+
+    async def generate_long_form_async(self, text, voice, player, max_chunk_duration=12.0,
+                                       silence_duration=0.2, max_tokens=MAX_TOKENS):
+        """Generate speech for long text by splitting into chunks with voice consistency
+
+        This method handles texts longer than the model's training distribution (5-15s)
+        by splitting into sentence-based chunks and generating each with the same voice.
+
+        Args:
+            text: Input text (can be any length)
+            voice: Voice name for consistency (e.g., 'katie', 'alloy')
+            player: LLMAudioPlayer instance for decoding audio
+            max_chunk_duration: Target duration per chunk in seconds (default 12s)
+            silence_duration: Duration of silence between chunks in seconds (default 0.2s)
+            max_tokens: Maximum tokens per generation
+
+        Returns:
+            Dictionary with:
+                - audio: Concatenated audio as numpy array
+                - chunks_info: List of info dicts for each chunk
+                - total_duration: Total audio duration in seconds
+                - total_generation_time: Total time spent generating
+        """
+        from generation.chunking import split_into_sentences, estimate_duration
+        from audio.streaming import StreamingAudioWriter
+
+        # Estimate if text needs chunking
+        estimated_duration = estimate_duration(text)
+        print(f"\n[Long-form] Estimated duration: {estimated_duration:.1f}s for text length: {len(text)} chars")
+
+        # Split into chunks
+        chunks = split_into_sentences(text, max_duration_seconds=max_chunk_duration)
+        print(f"[Long-form] Split into {len(chunks)} chunks")
+
+        if len(chunks) == 1:
+            print("[Long-form] Single chunk - using standard generation")
+
+        # Generate each chunk with voice prefix for consistency
+        audio_segments = []
+        chunks_info = []
+        total_generation_time = 0
+
+        for i, chunk in enumerate(chunks):
+            print(f"\n[Long-form] Generating chunk {i+1}/{len(chunks)}: '{chunk[:50]}...'")
+
+            # Add voice prefix for consistency
+            prompt = f"{voice}: {chunk}"
+
+            # Create audio writer for this chunk
+            audio_writer = StreamingAudioWriter(
+                player,
+                output_file=None,  # Don't write to file
+                chunk_size=25,     # Use default chunk size
+                lookback_frames=15  # Use default lookback
+            )
+            audio_writer.start()
+
+            # Generate this chunk
+            result = await self._generate_async(prompt, audio_writer, max_tokens=max_tokens)
+
+            # Finalize and get audio
+            audio = audio_writer.finalize()
+
+            if audio is not None and len(audio) > 0:
+                audio_segments.append(audio)
+                chunks_info.append({
+                    'chunk_index': i,
+                    'text': chunk,
+                    'duration': result['audio_duration'],
+                    'generation_time': result['generation_time'],
+                    'rtf': result['rtf']
+                })
+                total_generation_time += result['generation_time']
+            else:
+                print(f"[Long-form] Warning: No audio generated for chunk {i+1}")
+
+        # Concatenate audio segments with silence
+        if len(audio_segments) == 0:
+            raise ValueError("No audio was generated")
+
+        if len(audio_segments) == 1:
+            final_audio = audio_segments[0]
+        else:
+            final_audio = self._concatenate_with_silence(
+                audio_segments,
+                silence_duration=silence_duration
+            )
+
+        total_duration = len(final_audio) / SAMPLE_RATE
+
+        print(f"\n[Long-form] Complete!")
+        print(f"  Total chunks: {len(chunks)}")
+        print(f"  Total duration: {total_duration:.2f}s")
+        print(f"  Total generation time: {total_generation_time:.2f}s")
+        print(f"  Overall RTF: {total_generation_time / total_duration:.3f}")
+
+        return {
+            'audio': final_audio,
+            'chunks_info': chunks_info,
+            'total_duration': total_duration,
+            'total_generation_time': total_generation_time,
+            'num_chunks': len(chunks)
+        }
+
+    def _concatenate_with_silence(self, audio_segments, silence_duration=0.2):
+        """Concatenate audio segments with short silence between them
+
+        Args:
+            audio_segments: List of numpy audio arrays
+            silence_duration: Duration of silence in seconds
+
+        Returns:
+            Concatenated audio as numpy array
+        """
+        if len(audio_segments) == 1:
+            return audio_segments[0]
+
+        # Create silence buffer (zeros)
+        silence_samples = int(silence_duration * SAMPLE_RATE)
+        silence = np.zeros(silence_samples, dtype=audio_segments[0].dtype)
+
+        # Concatenate segments with silence in between
+        result = audio_segments[0]
+        for next_segment in audio_segments[1:]:
+            result = np.concatenate([result, silence, next_segment])
+
+        return result

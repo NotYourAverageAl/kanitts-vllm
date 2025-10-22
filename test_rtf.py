@@ -9,7 +9,7 @@ async def main():
     print("Initializing VLLM generator...")
     generator = VLLMTTSGenerator(
         tensor_parallel_size=1,
-        gpu_memory_utilization=0.9,  # Increased from 0.7 to maximize KV cache (RTX 5090: 32GB)
+        gpu_memory_utilization=0.9,
         max_model_len=2048
     )
 

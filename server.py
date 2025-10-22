@@ -51,9 +51,13 @@ class OpenAISpeechRequest(BaseModel):
     """OpenAI-compatible speech request model"""
     input: str = Field(..., description="Text to convert to speech")
     model: Literal["tts-1", "tts-1-hd"] = Field(default="tts-1", description="TTS model to use")
-    voice: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer", "random"] = Field(default="alloy", description="Voice to use (use 'random' to omit voice prefix)")
+    voice: Literal["andrew", "puck", "kore", "katie", "simon", "david", "jenny"] = Field(default="andrew", description="Voice to use (use 'random' to omit voice prefix)")
     response_format: Literal["wav", "pcm"] = Field(default="wav", description="Audio format: wav or pcm")
     stream_format: Optional[Literal["sse", "audio"]] = Field(default=None, description="Use 'sse' for Server-Sent Events streaming")
+    # Long-form generation parameters
+    enable_long_form: Optional[bool] = Field(default=True, description="Auto-detect and use long-form generation for texts >15s")
+    max_chunk_duration: Optional[float] = Field(default=12.0, description="Max duration per chunk in long-form mode (seconds)")
+    silence_duration: Optional[float] = Field(default=0.2, description="Silence between chunks in long-form mode (seconds)")
 
 
 @app.on_event("startup")
@@ -85,149 +89,6 @@ async def health_check():
     }
 
 
-@app.post("/tts")
-async def generate_speech(request: TTSRequest):
-    """Generate complete audio file (non-streaming)"""
-    if not generator or not player:
-        raise HTTPException(status_code=503, detail="TTS models not initialized")
-
-    try:
-        # Create audio writer
-        audio_writer = StreamingAudioWriter(
-            player,
-            output_file=None,  # We won't write to file
-            chunk_size=request.chunk_size,
-            lookback_frames=request.lookback_frames
-        )
-        audio_writer.start()
-
-        # Generate speech
-        result = generator.generate(
-            request.text,
-            audio_writer,
-            max_tokens=request.max_tokens
-        )
-
-        # Finalize and get audio
-        audio_writer.finalize()
-
-        if not audio_writer.audio_chunks:
-            raise HTTPException(status_code=500, detail="No audio generated")
-
-        # Concatenate all chunks
-        full_audio = np.concatenate(audio_writer.audio_chunks)
-
-        # Convert to WAV bytes
-        wav_buffer = io.BytesIO()
-        wav_write(wav_buffer, 22050, full_audio)
-        wav_buffer.seek(0)
-
-        return Response(
-            content=wav_buffer.read(),
-            media_type="audio/wav",
-            headers={
-                "Content-Disposition": "attachment; filename=speech.wav"
-            }
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/stream-tts")
-async def stream_speech(request: TTSRequest):
-    """Stream audio chunks as they're generated for immediate playback"""
-    if not generator or not player:
-        raise HTTPException(status_code=503, detail="TTS models not initialized")
-
-    import struct
-
-    async def audio_chunk_generator():
-        """Yield audio chunks as raw PCM data with length prefix"""
-        import asyncio
-        # Use thread-safe queue for communication between decoder thread and async task
-        import queue as thread_queue
-        chunk_queue = thread_queue.Queue()
-
-        # Create a custom list wrapper that pushes chunks to queue
-        class ChunkList(list):
-            def append(self, chunk):
-                super().append(chunk)
-                # Use thread-safe queue (decoder runs in a thread)
-                chunk_queue.put(("chunk", chunk))
-
-        audio_writer = StreamingAudioWriter(
-            player,
-            output_file=None,
-            chunk_size=request.chunk_size,
-            lookback_frames=request.lookback_frames
-        )
-
-        # Replace audio_chunks list with our custom one
-        audio_writer.audio_chunks = ChunkList()
-
-        # Start generation in background task
-        async def generate_async():
-            try:
-                audio_writer.start()
-                # Call the async method directly
-                await generator._generate_async(
-                    request.text,
-                    audio_writer,
-                    max_tokens=request.max_tokens
-                )
-                audio_writer.finalize()
-                chunk_queue.put(("done", None))  # Signal completion
-            except Exception as e:
-                print(f"Generation error: {e}")
-                import traceback
-                traceback.print_exc()
-                chunk_queue.put(("error", str(e)))
-
-        # Start generation as async task
-        gen_task = asyncio.create_task(generate_async())
-
-        # Stream chunks as they arrive
-        try:
-            while True:
-                # Use run_in_executor to make blocking queue.get() async-friendly
-                msg_type, data = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: chunk_queue.get(timeout=30)
-                )
-
-                if msg_type == "chunk":
-                    # Convert numpy array to int16 PCM
-                    pcm_data = (data * 32767).astype(np.int16)
-                    chunk_bytes = pcm_data.tobytes()
-
-                    # Send chunk length (4 bytes) + chunk data
-                    length_prefix = struct.pack('<I', len(chunk_bytes))
-                    yield length_prefix + chunk_bytes
-
-                elif msg_type == "done":
-                    # Send end marker (length = 0)
-                    yield struct.pack('<I', 0)
-                    break
-
-                elif msg_type == "error":
-                    # Send error marker (length = 0xFFFFFFFF)
-                    yield struct.pack('<I', 0xFFFFFFFF)
-                    break
-
-        finally:
-            await gen_task
-
-    return StreamingResponse(
-        audio_chunk_generator(),
-        media_type="application/octet-stream",
-        headers={
-            "X-Sample-Rate": "22050",
-            "X-Channels": "1",
-            "X-Bit-Depth": "16"
-        }
-    )
-
-
 @app.post("/v1/audio/speech")
 async def openai_speech(request: OpenAISpeechRequest):
     """OpenAI-compatible speech generation endpoint
@@ -251,51 +112,116 @@ async def openai_speech(request: OpenAISpeechRequest):
             """Generate Server-Sent Events with audio chunks"""
             import asyncio
             import queue as thread_queue
+            from generation.chunking import estimate_duration, split_into_sentences
+
             chunk_queue = thread_queue.Queue()
 
-            # Custom list wrapper that pushes chunks to queue
-            class ChunkList(list):
-                def append(self, chunk):
-                    super().append(chunk)
-                    chunk_queue.put(("chunk", chunk))
-
-            audio_writer = StreamingAudioWriter(
-                player,
-                output_file=None,
-                chunk_size=CHUNK_SIZE,
-                lookback_frames=LOOKBACK_FRAMES
-            )
-            audio_writer.audio_chunks = ChunkList()
+            # Estimate duration to determine if we need long-form generation
+            estimated_duration = estimate_duration(request.input)
+            voice_for_generation = request.voice if request.voice != "random" else "andrew"
+            use_long_form = estimated_duration > 15.0
 
             # Track token counts for usage reporting
             input_token_count = 0
             output_token_count = 0
 
-            # Start generation in background task
-            async def generate_async():
-                nonlocal input_token_count, output_token_count
-                try:
-                    audio_writer.start()
-                    result = await generator._generate_async(
-                        prompt_text,
-                        audio_writer,
-                        max_tokens=MAX_TOKENS
-                    )
-                    audio_writer.finalize()
+            if use_long_form:
+                # Long-form streaming: stream each sentence chunk as it's generated
+                print(f"[Server] Using long-form SSE streaming (estimated {estimated_duration:.1f}s)")
 
-                    # Extract token counts from result
-                    input_token_count = len(generator.prepare_input(prompt_text))
-                    output_token_count = len(result.get('all_token_ids', []))
+                async def generate_async_long_form():
+                    nonlocal input_token_count, output_token_count
+                    try:
+                        # Split into chunks
+                        chunks = split_into_sentences(request.input, max_duration_seconds=request.max_chunk_duration)
+                        total_chunks = len(chunks)
 
-                    chunk_queue.put(("done", {"input": input_token_count, "output": output_token_count}))
-                except Exception as e:
-                    print(f"Generation error: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    chunk_queue.put(("error", str(e)))
+                        for i, text_chunk in enumerate(chunks):
+                            # Custom list wrapper that pushes chunks to queue
+                            class ChunkList(list):
+                                def append(self, chunk):
+                                    super().append(chunk)
+                                    chunk_queue.put(("chunk", chunk))
 
-            # Start generation as async task
-            gen_task = asyncio.create_task(generate_async())
+                            audio_writer = StreamingAudioWriter(
+                                player,
+                                output_file=None,
+                                chunk_size=CHUNK_SIZE,
+                                lookback_frames=LOOKBACK_FRAMES
+                            )
+                            audio_writer.audio_chunks = ChunkList()
+                            audio_writer.start()
+
+                            # Generate with voice prefix
+                            chunk_prompt = f"{voice_for_generation}: {text_chunk}"
+                            result = await generator._generate_async(
+                                chunk_prompt,
+                                audio_writer,
+                                max_tokens=MAX_TOKENS
+                            )
+                            audio_writer.finalize()
+
+                            # Track tokens
+                            input_token_count += len(generator.prepare_input(chunk_prompt))
+                            output_token_count += len(result.get('all_token_ids', []))
+
+                            # Add silence between chunks (except after last chunk)
+                            if i < total_chunks - 1:
+                                silence_samples = int(request.silence_duration * 22050)
+                                silence = np.zeros(silence_samples, dtype=np.float32)
+                                chunk_queue.put(("chunk", silence))
+
+                        chunk_queue.put(("done", {"input": input_token_count, "output": output_token_count}))
+                    except Exception as e:
+                        print(f"Generation error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        chunk_queue.put(("error", str(e)))
+
+                gen_task = asyncio.create_task(generate_async_long_form())
+            else:
+                # Standard streaming for short texts
+                print(f"[Server] Using standard SSE streaming (estimated {estimated_duration:.1f}s)")
+
+                # Custom list wrapper that pushes chunks to queue
+                class ChunkList(list):
+                    def append(self, chunk):
+                        super().append(chunk)
+                        chunk_queue.put(("chunk", chunk))
+
+                audio_writer = StreamingAudioWriter(
+                    player,
+                    output_file=None,
+                    chunk_size=CHUNK_SIZE,
+                    lookback_frames=LOOKBACK_FRAMES
+                )
+                audio_writer.audio_chunks = ChunkList()
+
+                # Start generation in background task
+                async def generate_async():
+                    nonlocal input_token_count, output_token_count
+                    try:
+                        audio_writer.start()
+                        result = await generator._generate_async(
+                            prompt_text,
+                            audio_writer,
+                            max_tokens=MAX_TOKENS
+                        )
+                        audio_writer.finalize()
+
+                        # Extract token counts from result
+                        input_token_count = len(generator.prepare_input(prompt_text))
+                        output_token_count = len(result.get('all_token_ids', []))
+
+                        chunk_queue.put(("done", {"input": input_token_count, "output": output_token_count}))
+                    except Exception as e:
+                        print(f"Generation error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        chunk_queue.put(("error", str(e)))
+
+                # Start generation as async task
+                gen_task = asyncio.create_task(generate_async())
 
             # Stream chunks as they arrive
             try:
@@ -357,30 +283,53 @@ async def openai_speech(request: OpenAISpeechRequest):
     # Non-streaming mode (complete audio file)
     else:
         try:
-            # Create audio writer
-            audio_writer = StreamingAudioWriter(
-                player,
-                output_file=None,
-                chunk_size=CHUNK_SIZE,
-                lookback_frames=LOOKBACK_FRAMES
-            )
-            audio_writer.start()
+            # Estimate duration to determine if we need long-form generation
+            from generation.chunking import estimate_duration
+            estimated_duration = estimate_duration(request.input)
 
-            # Generate speech
-            result = await generator._generate_async(
-                prompt_text,
-                audio_writer,
-                max_tokens=MAX_TOKENS
-            )
+            # Determine voice for long-form generation
+            voice_for_generation = request.voice if request.voice != "random" else "andrew"
 
-            # Finalize and get audio
-            audio_writer.finalize()
+            # Use long-form generation for longer texts
+            use_long_form = estimated_duration > 15.0
 
-            if not audio_writer.audio_chunks:
-                raise HTTPException(status_code=500, detail="No audio generated")
+            if use_long_form:
+                print(f"[Server] Using long-form generation (estimated {estimated_duration:.1f}s)")
+                result = await generator.generate_long_form_async(
+                    text=request.input,
+                    voice=voice_for_generation,
+                    player=player,
+                    max_chunk_duration=request.max_chunk_duration,
+                    silence_duration=request.silence_duration,
+                    max_tokens=MAX_TOKENS
+                )
+                full_audio = result['audio']
+            else:
+                # Standard generation for short texts
+                print(f"[Server] Using standard generation (estimated {estimated_duration:.1f}s)")
+                audio_writer = StreamingAudioWriter(
+                    player,
+                    output_file=None,
+                    chunk_size=CHUNK_SIZE,
+                    lookback_frames=LOOKBACK_FRAMES
+                )
+                audio_writer.start()
 
-            # Concatenate all chunks
-            full_audio = np.concatenate(audio_writer.audio_chunks)
+                # Generate speech
+                result = await generator._generate_async(
+                    prompt_text,
+                    audio_writer,
+                    max_tokens=MAX_TOKENS
+                )
+
+                # Finalize and get audio
+                audio_writer.finalize()
+
+                if not audio_writer.audio_chunks:
+                    raise HTTPException(status_code=500, detail="No audio generated")
+
+                # Concatenate all chunks
+                full_audio = np.concatenate(audio_writer.audio_chunks)
 
             # Return based on response_format
             if request.response_format == "pcm":
@@ -408,6 +357,7 @@ async def openai_speech(request: OpenAISpeechRequest):
                 )
 
         except Exception as e:
+            print(e)
             raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -418,8 +368,6 @@ async def root():
         "name": "Kani TTS API",
         "version": "1.0.0",
         "endpoints": {
-            "/tts": "POST - Generate complete audio",
-            "/stream-tts": "POST - Stream audio chunks",
             "/v1/audio/speech": "POST - OpenAI-compatible speech generation",
             "/health": "GET - Health check"
         }

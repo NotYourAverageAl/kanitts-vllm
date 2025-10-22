@@ -30,6 +30,12 @@ REPETITION_PENALTY = 1.1
 REPETITION_CONTEXT_SIZE = 20
 MAX_TOKENS = 1200
 
+# Long-form generation configuration
+LONG_FORM_THRESHOLD_SECONDS = 15.0  # Auto-enable chunking for texts estimated >15s
+LONG_FORM_CHUNK_DURATION = 12.0     # Target duration per chunk (stay within 5-15s training distribution)
+LONG_FORM_SILENCE_DURATION = 0.2    # Silence between chunks in seconds
+
+
 # Model paths
-MODEL_NAME = "nineninesix/kani-tts-450m-0.3-pt"
+MODEL_NAME = "nineninesix/kani-tts-370m-en-multisp-gen-3"
 CODEC_MODEL_NAME = "nvidia/nemo-nano-codec-22khz-0.6kbps-12.5fps"
