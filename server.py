@@ -12,9 +12,8 @@ import base64
 import json
 
 from audio import LLMAudioPlayer, StreamingAudioWriter
-# from generation import TTSGenerator  # Original HuggingFace implementation
-from generation.vllm_generator import VLLMTTSGenerator  # VLLM implementation
-from config import CHUNK_SIZE, LOOKBACK_FRAMES, TEMPERATURE, TOP_P, MAX_TOKENS
+from generation.vllm_generator import VLLMTTSGenerator
+from config import CHUNK_SIZE, LOOKBACK_FRAMES, TEMPERATURE, TOP_P, MAX_TOKENS, LONG_FORM_THRESHOLD_SECONDS, LONG_FORM_SILENCE_DURATION, LONG_FORM_CHUNK_DURATION
 
 from nemo.utils.nemo_logging import Logger
 
@@ -69,8 +68,8 @@ async def startup_event():
     # Use VLLM for faster inference
     generator = VLLMTTSGenerator(
         tensor_parallel_size=1,        # Increase for multi-GPU
-        gpu_memory_utilization=0.9,    # Increased from 0.5 to maximize KV cache (RTX 5090: 32GB)
-        max_model_len=2048             # Maximum sequence length
+        gpu_memory_utilization=0.5,    # Increased from 0.5 to maximize KV cache (RTX 5090: 32GB)
+        max_model_len=1024             # Maximum sequence length
     )
 
     # Initialize the async engine during startup to avoid lazy loading on first request
@@ -119,7 +118,7 @@ async def openai_speech(request: OpenAISpeechRequest):
             # Estimate duration to determine if we need long-form generation
             estimated_duration = estimate_duration(request.input)
             voice_for_generation = request.voice if request.voice != "random" else "andrew"
-            use_long_form = estimated_duration > 15.0
+            use_long_form = estimated_duration > LONG_FORM_THRESHOLD_SECONDS
 
             # Track token counts for usage reporting
             input_token_count = 0
@@ -133,7 +132,7 @@ async def openai_speech(request: OpenAISpeechRequest):
                     nonlocal input_token_count, output_token_count
                     try:
                         # Split into chunks
-                        chunks = split_into_sentences(request.input, max_duration_seconds=request.max_chunk_duration)
+                        chunks = split_into_sentences(request.input, max_duration_seconds=request.max_chunk_duration or LONG_FORM_CHUNK_DURATION)
                         total_chunks = len(chunks)
 
                         for i, text_chunk in enumerate(chunks):
@@ -167,7 +166,7 @@ async def openai_speech(request: OpenAISpeechRequest):
 
                             # Add silence between chunks (except after last chunk)
                             if i < total_chunks - 1:
-                                silence_samples = int(request.silence_duration * 22050)
+                                silence_samples = int((request.silence_duration or LONG_FORM_SILENCE_DURATION) * 22050)
                                 silence = np.zeros(silence_samples, dtype=np.float32)
                                 chunk_queue.put(("chunk", silence))
 
@@ -299,8 +298,8 @@ async def openai_speech(request: OpenAISpeechRequest):
                     text=request.input,
                     voice=voice_for_generation,
                     player=player,
-                    max_chunk_duration=request.max_chunk_duration,
-                    silence_duration=request.silence_duration,
+                    max_chunk_duration=request.max_chunk_duration or LONG_FORM_CHUNK_DURATION,
+                    silence_duration=request.silence_duration or LONG_FORM_SILENCE_DURATION,
                     max_tokens=MAX_TOKENS
                 )
                 full_audio = result['audio']
