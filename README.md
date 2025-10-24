@@ -136,7 +136,7 @@ OpenAI-compatible endpoint for text-to-speech generation.
 
 #### Request Body
 
-```json
+```
 {
   "input": "Text to convert to speech",
   "model": "tts-1",                    // Optional: OpenAI compatibility only, no effect (actual model in config.py)
@@ -196,7 +196,7 @@ For texts estimated to take more than 15 seconds to speak (`LONG_FORM_THRESHOLD_
 4. Returns seamless combined audio
 
 **Control long-form behavior**:
-```json
+```
 {
   "input": "Very long text...",
   "voice": "andrew",
@@ -392,7 +392,7 @@ max_model_len=1024 (50 tokens equals to 1 sec)
 
 1. Ensure sample rate matches (22050 Hz)
 2. For long-form, adjust chunk duration:
-   ```json
+   ```
    {"max_chunk_duration": 10.0}  // Smaller chunks
    ```
 3. Increase lookback frames for smoother transitions in [config.py](config.py):
