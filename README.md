@@ -525,7 +525,7 @@ Apache 2. See [LICENSE](LICENSE) file for details.
 
 ## Support
 
-For issues, questions, or feature requests, please open an issue on GitHub.
+For issues, questions, or feature requests, please open an issue on GitHub or [Discord](https://discord.gg/NzP3rjB4SB)
 
 ---
 
