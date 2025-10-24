@@ -169,7 +169,7 @@ Example voices for English:
 
 #### Streaming Event Format (SSE)
 
-```json
+```
 data: {"type": "speech.audio.delta", "audio": "<base64_pcm_chunk>"}
 data: {"type": "speech.audio.delta", "audio": "<base64_pcm_chunk>"}
 data: {"type": "speech.audio.done", "usage": {"input_tokens": 25, "output_tokens": 487, "total_tokens": 512}}
