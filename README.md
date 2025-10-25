@@ -35,41 +35,46 @@ The system uses:
 ## Installation
 
 ### Prerequisites
-
+- Linux
 - Python 3.10 -- 3.12
 - NVIDIA GPU with CUDA 12.8+
 - 12GB+ VRAM recommended
 
 ### Install Dependencies
 
-Use the automated setup script:
-
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-The setup script will:
-1. Install `uv` package manager (if not already installed)
-2. Initialize the project and create a virtual environment
-3. Install all dependencies with correct versions:
-   - `vllm` - Automatically installs PyTorch compatible with your CUDA version
-   - `nemo-toolkit[tts]==2.4.0` - Audio codec
-   - `transformers==4.57.1` - Model utilities (upgraded after nemo-toolkit installation)
-   - `fastapi` and `uvicorn` - API framework
-
-**Manual Installation** (alternative)
-
-If you prefer manual installation, ensure you have `uv` installed first:
+1. Install `uv`:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv --version
+# v 0.9.5
 ```
 
-Then install dependencies:
+2. Activate uv
+```bash
+cd <your_project_dir>
+uv venv
+source .venv/bin/activate
+```
+
+3. Install FastAPI
 ```bash
 uv pip install fastapi uvicorn
+```
+
+4. Install nemo-toolkit (which will install `transformers==4.53`)
+```bash
 uv pip install "nemo-toolkit[tts]==2.4.0"
+```
+
+5. Install vLLM with automatic torch backend detection
+echo
+```bash
 uv pip install vllm --torch-backend=auto
+```
+
+6. (Optional) Check if `transformers==4.57.1` and if not force reinstall to 4.57.1 (required for model compatibility)
+```bash
 uv pip install "transformers==4.57.1"
 ```
 
