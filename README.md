@@ -27,7 +27,7 @@ Output: WAV / PCM / Server-Sent Events
 ```
 
 The system uses:
-- **TTS Model**: `nineninesix/kani-tts-370m` (More models [here](https://huggingface.co/nineninesix/models))
+- **TTS Model**: `nineninesix/kani-tts-400m-en` (More models [here](https://huggingface.co/nineninesix/models))
 - **Audio Codec**: `nvidia/nemo-nano-codec-22khz-0.6kbps-12.5fps`
 - **Inference Engine**: vLLM with async streaming and KV cache optimization
 - **Sample Rate**: 22050 Hz, 16-bit, mono
