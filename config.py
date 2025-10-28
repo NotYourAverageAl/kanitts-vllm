@@ -37,5 +37,5 @@ LONG_FORM_SILENCE_DURATION = 0.2    # Silence between chunks in seconds
 
 
 # Model paths
-MODEL_NAME = "nineninesix/kani-tts-370m"
+MODEL_NAME = "nineninesix/kani-tts-400m-en"
 CODEC_MODEL_NAME = "nvidia/nemo-nano-codec-22khz-0.6kbps-12.5fps"
