@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+# Install uv properly
+RUN curl -LsSf https://astral.sh/uv/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
 
 # Copy project files
 COPY . .
@@ -22,8 +22,5 @@ RUN uv pip install fastapi uvicorn && \
     uv pip install vllm --torch-backend=auto && \
     uv pip install "transformers==4.57.1"
 
-# Expose port
 EXPOSE 8000
-
-# Run server with uv
 CMD ["uv", "run", "python", "server.py"]
