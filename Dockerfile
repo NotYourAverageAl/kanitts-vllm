@@ -18,14 +18,17 @@ WORKDIR /app
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
+# --- CORRECTED LINE ---
+# Explicitly set CUDA_HOME so build scripts like vllm's can find the toolkit
+ENV CUDA_HOME=/usr/local/cuda
+
 # Copy the project files into the image
 COPY . .
 
 # Install all Python dependencies.
-# The compiled libraries and packages will be stored in this stage.
+# This will now succeed because vllm can find the CUDA toolkit.
 RUN uv pip install --system fastapi uvicorn "nemo-toolkit[tts]==2.4.0" vllm --torch-backend=auto \
     && uv pip install --system "transformers==4.57.1"
-    # We don't need to clear the cache here, as this stage will be discarded
 
 # =========================================================================
 # Stage 2: The "Final" Image - Use the small 'runtime' image
@@ -46,8 +49,7 @@ WORKDIR /app
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# CRITICAL STEP: Copy the installed Python packages from the "builder" stage
-# This brings over vllm, torch, nemo, etc., without the CUDA toolkit
+# Copy the installed Python packages from the "builder" stage
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 
 # Copy the application code from the "builder" stage
