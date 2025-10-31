@@ -1,6 +1,5 @@
 # ================================================================
-# KaniTTS-vLLM Dockerfile
-# Compatible with CUDA 12.4 and NeMo TTS 2.4.0
+# KaniTTS-vLLM — CUDA 12.4 Runtime + NeMo 2.4.0 Compatible Build
 # ================================================================
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
@@ -8,8 +7,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
 # --- System dependencies ---
+# Includes Python dev headers, ffmpeg for audio, and compiler toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
+    python3.10-dev \
     python3-pip \
     python3-venv \
     ffmpeg \
@@ -25,8 +26,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
 
 # --- Python dependencies ---
-# 1. Install PyTorch matching CUDA 12.4
-# 2. Install required libraries in order to avoid dependency conflicts
+# 1. Install CUDA-compatible PyTorch
+# 2. Install required libraries (order matters for dependency resolution)
 RUN uv pip install --system torch torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu124 && \
     uv pip install --system fastapi uvicorn && \
@@ -41,5 +42,5 @@ COPY . .
 # --- Runtime configuration ---
 EXPOSE 8000
 
-# Launch the FastAPI server
+# Default command
 CMD ["uv", "run", "python", "server.py"]
