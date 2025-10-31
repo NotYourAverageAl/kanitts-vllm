@@ -1,8 +1,10 @@
-# Set the CUDA_VERSION as a build argument. Defaulting to 12.8.1 as per README.
+# =========================================================================
+# Stage 1: The "Builder" - Use the large 'devel' image to install everything
+# =========================================================================
 ARG CUDA_VERSION=12.8.1
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS builder
 
-# Install Python, curl, and the required ffmpeg dependency
+# Install system dependencies needed for the build
 RUN apt-get update && apt-get install -y \
     python3.10 \
     python3-pip \
@@ -14,19 +16,42 @@ WORKDIR /app
 
 # Install uv - the fast Python package installer
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Add the uv binary's location to the system PATH
 ENV PATH="/root/.local/bin:$PATH"
 
 # Copy the project files into the image
 COPY . .
 
-# Install dependencies and clear the uv cache in the same layer
-RUN uv pip install --system fastapi uvicorn && \
-    uv pip install --system "nemo-toolkit[tts]==2.4.0" && \
-    uv pip install --system vllm --torch-backend=auto && \
-    uv pip install --system "transformers==4.57.1" && \
-    rm -rf /root/.cache/uv
+# Install all Python dependencies.
+# The compiled libraries and packages will be stored in this stage.
+RUN uv pip install --system fastapi uvicorn "nemo-toolkit[tts]==2.4.0" vllm --torch-backend=auto \
+    && uv pip install --system "transformers==4.57.1"
+    # We don't need to clear the cache here, as this stage will be discarded
+
+# =========================================================================
+# Stage 2: The "Final" Image - Use the small 'runtime' image
+# =========================================================================
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+
+# Install only the necessary RUNTIME system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    curl \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install uv and set the PATH again for the CMD command
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# CRITICAL STEP: Copy the installed Python packages from the "builder" stage
+# This brings over vllm, torch, nemo, etc., without the CUDA toolkit
+COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+
+# Copy the application code from the "builder" stage
+COPY --from=builder /app /app
 
 # Expose the application port
 EXPOSE 8000
