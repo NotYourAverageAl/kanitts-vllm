@@ -14,12 +14,14 @@ WORKDIR /app
 
 # Install uv - the fast Python package installer
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+
+# CORRECTED LINE: Add the uv binary's location to the system PATH
+ENV PATH="/root/.local/bin:$PATH"
 
 # Copy the project files into the image
 COPY . .
 
-# Install dependencies using uv, with pinned versions as per the README
+# Install dependencies using uv. This will now work because uv is in the PATH.
 RUN uv pip install fastapi uvicorn && \
     uv pip install "nemo-toolkit[tts]==2.4.0" && \
     uv pip install vllm --torch-backend=auto && \
