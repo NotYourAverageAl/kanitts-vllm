@@ -18,16 +18,22 @@ WORKDIR /app
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# --- CORRECTED LINE ---
-# Explicitly set CUDA_HOME so build scripts like vllm's can find the toolkit
+# --- CORRECTED LINES ---
+# Explicitly set all CUDA-related environment variables
+# This ensures build scripts can find the toolkit and its libraries
 ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
 # Copy the project files into the image
 COPY . .
 
-# Install all Python dependencies.
-# This will now succeed because vllm can find the CUDA toolkit.
-RUN uv pip install --system fastapi uvicorn "nemo-toolkit[tts]==2.4.0" vllm --torch-backend=auto \
+# --- CORRECTED INSTALLATION LOGIC ---
+# Install dependencies sequentially to ensure a stable build environment for vllm
+# 1. Install torch first, as it's a critical build dependency for vllm.
+# 2. Install nemo, vllm, and others.
+# 3. Upgrade transformers last to resolve the conflict.
+RUN uv pip install --system torch \
+    && uv pip install --system fastapi uvicorn "nemo-toolkit[tts]==2.4.0" vllm --torch-backend=auto \
     && uv pip install --system "transformers==4.57.1"
 
 # =========================================================================
