@@ -15,17 +15,18 @@ WORKDIR /app
 # Install uv - the fast Python package installer
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# CORRECTED LINE: Add the uv binary's location to the system PATH
+# Add the uv binary's location to the system PATH
 ENV PATH="/root/.local/bin:$PATH"
 
 # Copy the project files into the image
 COPY . .
 
-# Install dependencies using uv. This will now work because uv is in the PATH.
-RUN uv pip install fastapi uvicorn && \
-    uv pip install "nemo-toolkit[tts]==2.4.0" && \
-    uv pip install vllm --torch-backend=auto && \
-    uv pip install "transformers==4.57.1"
+# CORRECTED LINE: Use the --system flag for all uv pip install commands
+# It's also slightly more efficient to combine these into a single RUN layer.
+RUN uv pip install --system fastapi uvicorn && \
+    uv pip install --system "nemo-toolkit[tts]==2.4.0" && \
+    uv pip install --system vllm --torch-backend=auto && \
+    uv pip install --system "transformers==4.57.1"
 
 # Expose the application port
 EXPOSE 8000
