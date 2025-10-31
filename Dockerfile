@@ -1,31 +1,48 @@
-# Use a stable CUDA runtime base image
+# ================================================================
+# Stage 1 — Base image with CUDA runtime + Python
+# ================================================================
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
-# Install Python and curl
-RUN apt-get update && apt-get install -y \
+# Avoid interactive prompts during installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install minimal system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3-pip \
+    python3-venv \
     curl \
     bash \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install uv properly
+# ================================================================
+# Stage 2 — Install uv (fast pip replacement)
+# ================================================================
 RUN curl -LsSf https://astral.sh/uv/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
 
-# Copy project files
-COPY . .
-
-# Install dependencies using uv (system-wide)
-RUN uv pip install --system fastapi uvicorn && \
+# ================================================================
+# Stage 3 — Install Python dependencies
+# ================================================================
+# Pre-install CUDA-compatible PyTorch before vLLM
+RUN uv pip install --system torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu124 && \
+    uv pip install --system fastapi uvicorn && \
     uv pip install --system nemo-toolkit[tts] && \
     uv pip install --system vllm --torch-backend=auto && \
-    uv pip install --system "transformers==4.57.1"
+    uv pip install --system "transformers==4.57.1" && \
+    uv pip cache purge
 
-# Expose port for the app
+# ================================================================
+# Stage 4 — Copy project files and set up runtime
+# ================================================================
+COPY . .
+
+# Expose API port
 EXPOSE 8000
 
-# Default command
+# Default working directory & runtime command
 CMD ["uv", "run", "python", "server.py"]
