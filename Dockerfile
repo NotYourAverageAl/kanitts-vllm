@@ -21,12 +21,9 @@ ENV PATH="/root/.local/bin:$PATH"
 # Copy the project files into the image
 COPY . .
 
-# CORRECTED LINE: Use the --system flag for all uv pip install commands
-# It's also slightly more efficient to combine these into a single RUN layer.
-RUN uv pip install --system fastapi uvicorn && \
-    uv pip install --system "nemo-toolkit[tts]==2.4.0" && \
-    uv pip install --system vllm --torch-backend=auto && \
-    uv pip install --system "transformers==4.57.1"
+# Install dependencies and clear the uv cache in the same layer
+RUN uv pip install --system fastapi uvicorn "nemo-toolkit[tts]==2.4.0" vllm --torch-backend=auto "transformers==4.57.1" \
+    && rm -rf /root/.cache/uv
 
 # Expose the application port
 EXPOSE 8000
