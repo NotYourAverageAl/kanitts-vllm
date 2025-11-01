@@ -19,6 +19,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # this specifies what to remove to free up space
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          swift: true
+          go: false
+          python: false
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
